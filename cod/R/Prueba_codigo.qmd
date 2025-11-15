@@ -1,0 +1,122 @@
+---
+title: "Prueba_codigo"
+format: html
+editor: visual
+---
+
+```{r}
+library(shiny)
+library(tidyverse)
+library(plotly)
+library(maps)
+library(janitor)
+library(here)
+
+obesidad <- read_csv(here("data_raw/Obesidad.csv"), show_col_types = FALSE) %>% 
+  clean_names() %>% 
+  select(year, state = state, rate) %>% 
+  mutate(
+    year = as.integer(year),
+    state = str_to_title(str_trim(state)),
+    rate = as.numeric(rate)
+  )
+
+mortalidad <- read_csv(here("data_raw/Mortalidad_cardiovascular.csv"), show_col_types = FALSE) %>% 
+  clean_names() %>% 
+  filter(geographic_level == "State") %>% 
+  select(year, state = location_desc, data_value) %>% 
+  mutate(
+    year = as.integer(year),
+    state = str_to_title(str_trim(state)),
+    data_value = as.numeric(data_value)
+  )
+
+
+años_comunes <- intersect(obesidad$year, mortalidad$year)
+obesidad <- obesidad %>% filter(year %in% años_comunes)
+mortalidad <- mortalidad %>% filter(year %in% años_comunes)
+
+
+obesidad_mortalidad <- left_join(obesidad, mortalidad, by = c("state", "year")) %>%
+  group_by(state) %>%
+  mutate(data_value = ifelse(is.na(data_value), mean(data_value, na.rm = TRUE), data_value)) %>%
+  ungroup() %>%
+  filter(!is.na(data_value))
+
+
+if(!dir.exists(here("res"))) dir.create(here("res"))
+estados_unicos <- unique(obesidad_mortalidad$state)
+
+for(st in estados_unicos){
+  carpeta_estado <- here("res", st)
+  if(!dir.exists(carpeta_estado)) dir.create(carpeta_estado)
+  
+  datos_estado <- obesidad_mortalidad %>% filter(state == st)
+  
+  p <- ggplot(datos_estado, aes(x = rate, y = data_value)) +
+    geom_point(color = "red") +
+    geom_smooth(method = "lm", se = FALSE, color = "blue") +
+    labs(
+      title = paste("Obesidad vs Enfermedades Cardiovasculares -", st),
+      x = "Obesidad (%)",
+      y = "Enfermedades Cardiovasculares (%)"
+    )
+  
+  ggsave(
+    filename = file.path(carpeta_estado, paste0(st, "_obesidad_vs_cardiovascular.png")),
+    plot = p,
+    width = 7, height = 5
+  )
+}
+
+
+us_states <- map_data("state") %>%
+  mutate(region = str_to_title(region))
+
+
+ui <- fluidPage(
+  titlePanel("Mapa interactivo de Estados Unidos: Obesidad vs Enfermedades Cardiovasculares"),
+  sidebarLayout(
+    sidebarPanel(
+      p("Haz clic en un estado para ver su gráfico.")
+    ),
+    mainPanel(
+      plotlyOutput("mapa"),
+      uiOutput("grafico_estado")
+    )
+  )
+)
+
+
+server <- function(input, output, session){
+  
+
+  output$mapa <- renderPlotly({
+    gg <- ggplot(us_states, aes(long, lat, group = group, text = region)) +
+      geom_polygon(fill = "lightblue", color = "white") +
+      coord_fixed(1.3) +
+      theme_void()
+    
+    ggplotly(gg, tooltip = "text") %>% 
+      event_register("plotly_click")
+  })
+  
+
+  output$grafico_estado <- renderUI({
+    d <- event_data("plotly_click")
+    if(is.null(d)) return(NULL)
+    
+    estado_seleccionado <- d$text
+    grafico_path <- list.files(path = here("res", estado_seleccionado), 
+                               pattern = "_obesidad_vs_cardiovascular.png$", full.names = TRUE)
+    if(length(grafico_path) == 0) return(NULL)
+    
+    tags$img(src = grafico_path, width = "700px")
+  })
+  
+}
+
+
+shinyApp(ui, server)
+```
+
