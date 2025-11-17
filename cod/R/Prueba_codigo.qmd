@@ -92,5 +92,10 @@ for (a in anios) {
 write.csv(Obesidad.limpia, here("data", "Obesidad.limpia.csv"), row.names = FALSE)
 write.csv(Cardiovascular.limpia, here("data", "Cardiovascular.limpia.csv"), row.names = FALSE)
 
+summary(Base.graficos)
+table(is.na(Base.graficos$Obesidad))
+table(is.na(Base.graficos$Mortalidad_cardiovascular))
+#Ahora procedemos a crear los diveros graficos y la interfaz grafica con la que interactua el usuario
+
 ```
 
