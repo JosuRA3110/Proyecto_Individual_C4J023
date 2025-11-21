@@ -15,6 +15,14 @@ library(tidyverse)
 library(readr)
 library(readxl)
 library(zoo)
+library(leaflet)
+library(ggplot2)
+library(shiny)
+library(maps)
+library(tigris)
+library(sf)
+
+options(tigris_use_cache = TRUE)
 
 #Ahora cargamos los datos adecuadamente: 
 Obesidad <- read_excel(here("data_raw", "Obesidad_2011-2022.xlsx"))
@@ -91,11 +99,198 @@ for (a in anios) {
 #Guardamos el resto de bases en data
 write.csv(Obesidad.limpia, here("data", "Obesidad.limpia.csv"), row.names = FALSE)
 write.csv(Cardiovascular.limpia, here("data", "Cardiovascular.limpia.csv"), row.names = FALSE)
+write.csv(Base.graficos, here("data", "Base.graficos.csv"), row.names = FALSE)
 
-summary(Base.graficos)
-table(is.na(Base.graficos$Obesidad))
-table(is.na(Base.graficos$Mortalidad_cardiovascular))
+
 #Ahora procedemos a crear los diveros graficos y la interfaz grafica con la que interactua el usuario
+#Primero creamos el mapa 
+
+
+Base.graficos <- read.csv(here("data", "Base.graficos.csv"))
+Base.graficos$Año <- as.integer(Base.graficos$Año)
+
+us_map_raw <- maps::map("state", fill = TRUE, plot = FALSE)
+us_map_sf <- sf::st_as_sf(us_map_raw)
+
+us_map_sf$state_name <- tolower(us_map_sf$ID)
+
+tabla_estados <- tibble(
+  state_name = tolower(state.name),
+  Estado = state.abb
+)
+
+us_map_sf <- us_map_sf %>%
+  left_join(tabla_estados, by = "state_name")
+
+pal <- colorNumeric(
+  palette = "YlOrRd",
+  domain = Base.graficos$Obesidad,
+  na.color = "#cccccc"
+)
+
+# =======================================================
+#                   UI
+# =======================================================
+
+ui <- fluidPage(
+  tags$head(tags$style(HTML("
+      #plotContainer {
+        height: 450px;
+        overflow: hidden;
+      }
+  "))),
+  
+  fluidRow(
+    column(
+      width = 4,
+      h4("Seleccione el año:"),
+      sliderInput(
+        inputId = "selected_year",
+        label = NULL,
+        min = min(Base.graficos$Año),
+        max = max(Base.graficos$Año),
+        value = min(Base.graficos$Año),
+        step = 1,
+        sep = ""
+      ),
+      br(), br(),
+      
+      div(
+        id = "plotContainer",
+        plotOutput("state_plot", height = "420px")
+      )
+    ),
+    
+    column(
+      width = 8,
+      leafletOutput("map", height = "750px")
+    )
+  )
+)
+
+# =======================================================
+#                   SERVER
+# =======================================================
+
+server <- function(input, output, session) {
+  
+  estado_click <- reactiveVal(NULL)   #### ← AGREGADO
+
+  # ------- MAPA ---------
+output$map <- renderLeaflet({
+
+  base_anio <- Base.graficos %>%
+    filter(Año == input$anio)
+
+  mapa_completo <- us_map_sf %>%
+    left_join(base_anio, by = "Estado")
+
+  leaflet(mapa_completo) %>%
+    addProviderTiles("CartoDB.Positron") %>%
+    addPolygons(
+      fillColor = ~pal(Obesidad),
+      weight = 1,
+      opacity = 1,
+      color = "white",
+      fillOpacity = 0.8,
+      layerId = ~Estado,
+      options = pathOptions(
+        clickable = TRUE,
+        bubblingMouseEvents = FALSE   ## ← SUPER IMPORTANTE
+      ),
+      highlightOptions = highlightOptions(
+        weight = 3,
+        color = "#555",
+        fillOpacity = 0.9,
+        bringToFront = TRUE
+      ),
+      label = ~lapply(
+        paste0(
+          "<b>Estado: ", Estado, "</b><br>",
+          "Obesidad: ", round(Obesidad, 1), "%<br>",
+          "Mortalidad cardiovascular: ", round(Mortalidad_cardiovascular, 1)
+        ),
+        htmltools::HTML
+      )
+    ) %>%
+    htmlwidgets::onRender("
+      function(el, x) {
+        var map = this;
+
+        // Recorre todas las capas (polígonos)
+        map.eachLayer(function(layer) {
+          if (layer.options && layer.options.layerId) {
+
+            // Eliminar listeners viejos
+            layer.off('dblclick');
+
+            // Agregar doble clic para este polígono
+            layer.on('dblclick', function(e) {
+
+              console.log('Doble clic en estado: ' + layer.options.layerId);
+
+              Shiny.setInputValue(
+                'estado_dblclick',
+                layer.options.layerId,
+                {priority: 'event'}
+              );
+            });
+          }
+        });
+      }
+    ")
+})
+    # Detectar doble click
+observeEvent(input$estado_dblclick, {
+  estado_click(input$estado_dblclick)
+  print(paste("Doble click en:", input$estado_dblclick))
+})
+
+  # --------- GRAFICO DEL ESTADO ---------
+  output$grafico_estado <- renderPlot({
+
+    req(estado_click())
+
+    df <- Base.graficos %>% 
+      filter(Estado == estado_click())
+
+    g <- ggplot(df, aes(x = Obesidad, y = Mortalidad_cardiovascular)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_smooth(method = "loess", se = FALSE, linewidth = 1, span = 0.8) +
+  labs(
+    title = paste("Relación Obesidad vs Mortalidad -", estado_click()),
+    x = "Obesidad (%)",
+    y = "Mortalidad Cardiovascular"
+  ) +
+  theme_minimal(base_size = 14)
+
+    # Guardar en PDF HD automáticamente
+    ggsave(
+      filename = here("data", paste0("Grafico_", estado_click(), ".pdf")),
+      plot = g,
+      device = "pdf",
+      width = 8,
+      height = 6
+    )
+
+    g
+  })
+
+  # --------- DESCARGA PDF ---------
+  output$descargar_pdf <- downloadHandler(
+    filename = function() {
+      paste0("Grafico_", estado_click(), ".pdf")
+    },
+    content = function(file) {
+      file.copy(
+        here("data", paste0("Grafico_", estado_click(), ".pdf")),
+        file
+      )
+    }
+  )
+}
+
+shinyApp(ui, server)
 
 ```
 
