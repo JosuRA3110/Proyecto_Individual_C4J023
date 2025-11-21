@@ -128,9 +128,9 @@ pal <- colorNumeric(
   na.color = "#cccccc"
 )
 
-# =======================================================
-#                   UI
-# =======================================================
+# ============================
+# UI
+# ============================
 
 ui <- fluidPage(
   tags$head(tags$style(HTML("
@@ -153,14 +153,15 @@ ui <- fluidPage(
         step = 1,
         sep = ""
       ),
+
       br(), br(),
-      
+
       div(
         id = "plotContainer",
-        plotOutput("state_plot", height = "420px")
+        plotOutput("state_plot", height = "420px"),
       )
     ),
-    
+
     column(
       width = 8,
       leafletOutput("map", height = "750px")
@@ -168,126 +169,104 @@ ui <- fluidPage(
   )
 )
 
-# =======================================================
-#                   SERVER
-# =======================================================
+# ============================
+# SERVER
+# ============================
 
 server <- function(input, output, session) {
   
-  estado_click <- reactiveVal(NULL)   #### ← AGREGADO
+  estado_click <- reactiveVal(NULL)
 
-  # ------- MAPA ---------
-output$map <- renderLeaflet({
+  # ============================
+  # MAPA
+  # ============================
 
-  base_anio <- Base.graficos %>%
-    filter(Año == input$anio)
+  output$map <- renderLeaflet({
 
-  mapa_completo <- us_map_sf %>%
-    left_join(base_anio, by = "Estado")
+    base_anio <- Base.graficos %>%
+      filter(Año == input$selected_year)
 
-  leaflet(mapa_completo) %>%
-    addProviderTiles("CartoDB.Positron") %>%
-    addPolygons(
-      fillColor = ~pal(Obesidad),
-      weight = 1,
-      opacity = 1,
-      color = "white",
-      fillOpacity = 0.8,
-      layerId = ~Estado,
-      options = pathOptions(
-        clickable = TRUE,
-        bubblingMouseEvents = FALSE   ## ← SUPER IMPORTANTE
-      ),
-      highlightOptions = highlightOptions(
-        weight = 3,
-        color = "#555",
-        fillOpacity = 0.9,
-        bringToFront = TRUE
-      ),
-      label = ~lapply(
-        paste0(
-          "<b>Estado: ", Estado, "</b><br>",
-          "Obesidad: ", round(Obesidad, 1), "%<br>",
-          "Mortalidad cardiovascular: ", round(Mortalidad_cardiovascular, 1)
+    mapa_completo <- us_map_sf %>%
+      left_join(base_anio, by = "Estado")
+
+    leaflet(mapa_completo) %>%
+      addProviderTiles("CartoDB.Positron") %>%
+      addPolygons(
+        fillColor = ~pal(Obesidad),
+        weight = 1,
+        opacity = 1,
+        color = "white",
+        fillOpacity = 0.8,
+        layerId = ~Estado,
+        options = pathOptions(
+          clickable = TRUE,
+          bubblingMouseEvents = FALSE
         ),
-        htmltools::HTML
-      )
-    ) %>%
-    htmlwidgets::onRender("
-      function(el, x) {
-        var map = this;
+        highlightOptions = highlightOptions(
+          weight = 3,
+          color = "#555",
+          fillOpacity = 0.9,
+          bringToFront = TRUE
+        ),
+        label = ~lapply(
+          paste0(
+            "<b>Estado: ", Estado, "</b><br>",
+            "Obesidad: ", round(Obesidad, 1), "%<br>",
+            "Mortalidad: ", round(Mortalidad_cardiovascular, 1)
+          ),
+          htmltools::HTML
+        )
+      ) %>%
+      htmlwidgets::onRender("
+        function(el, x) {
+          var map = this;
 
-        // Recorre todas las capas (polígonos)
-        map.eachLayer(function(layer) {
-          if (layer.options && layer.options.layerId) {
+          map.eachLayer(function(layer) {
+            if (layer.options && layer.options.layerId) {
 
-            // Eliminar listeners viejos
-            layer.off('dblclick');
+              layer.off('dblclick');
 
-            // Agregar doble clic para este polígono
-            layer.on('dblclick', function(e) {
+              layer.on('dblclick', function(e) {
+                Shiny.setInputValue('estado_dblclick', layer.options.layerId, {priority: 'event'});
+              });
 
-              console.log('Doble clic en estado: ' + layer.options.layerId);
+            }
+          });
+        }
+      ")
+  })
 
-              Shiny.setInputValue(
-                'estado_dblclick',
-                layer.options.layerId,
-                {priority: 'event'}
-              );
-            });
-          }
-        });
-      }
-    ")
-})
-    # Detectar doble click
-observeEvent(input$estado_dblclick, {
-  estado_click(input$estado_dblclick)
-  print(paste("Doble click en:", input$estado_dblclick))
-})
 
-  # --------- GRAFICO DEL ESTADO ---------
-  output$grafico_estado <- renderPlot({
+  # ============================
+  # REGISTRAR DOBLE CLICK
+  # ============================
+
+  observeEvent(input$estado_dblclick, {
+    estado_click(input$estado_dblclick)
+    cat("Doble clic en:", input$estado_dblclick, "\n")
+  })
+
+  # ============================
+  # GRAFICO SUAVE LOESS
+  # ============================
+
+  output$state_plot <- renderPlot({
 
     req(estado_click())
 
-    df <- Base.graficos %>% 
+    df <- Base.graficos %>%
       filter(Estado == estado_click())
 
-    g <- ggplot(df, aes(x = Obesidad, y = Mortalidad_cardiovascular)) +
-  geom_point(size = 3, alpha = 0.8) +
-  geom_smooth(method = "loess", se = FALSE, linewidth = 1, span = 0.8) +
-  labs(
-    title = paste("Relación Obesidad vs Mortalidad -", estado_click()),
-    x = "Obesidad (%)",
-    y = "Mortalidad Cardiovascular"
-  ) +
-  theme_minimal(base_size = 14)
-
-    # Guardar en PDF HD automáticamente
-    ggsave(
-      filename = here("data", paste0("Grafico_", estado_click(), ".pdf")),
-      plot = g,
-      device = "pdf",
-      width = 8,
-      height = 6
-    )
-
-    g
+    ggplot(df, aes(x = Obesidad, y = Mortalidad_cardiovascular)) +
+      geom_point(size = 3, alpha = 0.8) +
+      geom_smooth(method = "loess", se = FALSE, linewidth = 1.3, span = 0.8) +
+      labs(
+        title = paste("Relación Obesidad vs Mortalidad -", estado_click()),
+        x = "Obesidad (%)",
+        y = "Mortalidad Cardiovascular"
+      ) +
+      theme_minimal(base_size = 14)
   })
-
-  # --------- DESCARGA PDF ---------
-  output$descargar_pdf <- downloadHandler(
-    filename = function() {
-      paste0("Grafico_", estado_click(), ".pdf")
-    },
-    content = function(file) {
-      file.copy(
-        here("data", paste0("Grafico_", estado_click(), ".pdf")),
-        file
-      )
-    }
-  )
 }
 
 shinyApp(ui, server)
