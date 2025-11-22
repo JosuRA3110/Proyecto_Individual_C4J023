@@ -102,13 +102,14 @@ write.csv(Cardiovascular.limpia, here("data", "Cardiovascular.limpia.csv"), row.
 write.csv(Base.graficos, here("data", "Base.graficos.csv"), row.names = FALSE)
 
 
-#Ahora procedemos a crear los diveros graficos y la interfaz grafica con la que interactua el usuario
-#Primero creamos el mapa 
+#Ahora procedemos a crear los diversos graficos y la interfaz grafica con la que interactua el usuario
 
+#Primero cargamos lo necesario
 
 Base.graficos <- read.csv(here("data", "Base.graficos.csv"))
 Base.graficos$Año <- as.integer(Base.graficos$Año)
 
+#Cargamos los mapas de los estados para colocrlos como poligonos
 us_map_raw <- maps::map("state", fill = TRUE, plot = FALSE)
 us_map_sf <- sf::st_as_sf(us_map_raw)
 
@@ -128,10 +129,7 @@ pal <- colorNumeric(
   na.color = "#cccccc"
 )
 
-# ============================
-# UI
-# ============================
-
+#Hacemos la interfaz por utilizar 
 ui <- fluidPage(
   tags$head(tags$style(HTML("
       #plotContainer {
@@ -169,17 +167,13 @@ ui <- fluidPage(
   )
 )
 
-# ============================
-# SERVER
-# ============================
+#Aca hacemos basicamente la pagina que mantendra los graficos deseados y creara en tiempo real los graficos por estado.
 
 server <- function(input, output, session) {
   
   estado_click <- reactiveVal(NULL)
 
-  # ============================
-  # MAPA
-  # ============================
+#Hacemos el mapa de los estados
 
   output$map <- renderLeaflet({
 
@@ -237,18 +231,14 @@ server <- function(input, output, session) {
   })
 
 
-  # ============================
-  # REGISTRAR DOBLE CLICK
-  # ============================
+#Aca registramos cuando el usuario realiza el doble clic para saber si se deben desplegar los graficos dados.
 
   observeEvent(input$estado_dblclick, {
     estado_click(input$estado_dblclick)
     cat("Doble clic en:", input$estado_dblclick, "\n")
   })
 
-  # ============================
-  # GRAFICO SUAVE LOESS
-  # ============================
+#Aca hacemos los graficos por estado.
 
   output$state_plot <- renderPlot({
 
